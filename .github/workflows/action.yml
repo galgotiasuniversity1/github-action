@@ -1,30 +1,52 @@
-name: GitHub Actions Demo
-run-name: ${{ github.actor }} is testing out GitHub Actions
+name: Build, Test, and Deploy to AWS EC2
 
-on: [push]
+on:
+  push:
+    branches:
+      - main
 
 jobs:
-  Explore-GitHub-Actions:
+  build_test_deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Print trigger information
-        run: echo "* The job was automatically triggered by a ${GITHUB_EVENT_NAME} event."
-      
-      - name: Print runner information
-        run: echo "This job is now running on a ${{ runner.os }} runner."
-      
-      - name: Print branch information
-        run: echo "The name of your branch is ${GITHUB_REF}."
-      
-      - name: Check out repository code
-        uses: actions/checkout@v4
-      
-      - name: Print repository information
-        run: echo "The ${{ github.repository }} repository has been checked out."
+      - uses: actions/checkout@v3
 
-      - name: List files in the repository
+      - name: Set up Python 
+        uses: actions/setup-python@v3
+        with:
+          python-version: '3.10' 
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build Docker Image
+        run: docker build -t my-streamlit-app:latest .
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Push Docker Image to ECR
         run: |
-          ls ${{ github.workspace }}
-      
-      - name: Print job status
-        run: echo "* This job's status is ${{ job.status }}."
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+          docker tag my-streamlit-app:latest ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/my-streamlit-app:latest
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/my-streamlit-app:latest    
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.EC2_HOST }} 
+          username: ${{ secrets.EC2_USERNAME }} 
+          key: ${{ secrets.EC2_SSH_KEY }}  
+          script: |
+            docker pull ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/my-streamlit-app:latest
+            docker stop my-streamlit-app || true # In case the container doesn't exist yet
+            docker rm my-streamlit-app || true
+            docker run -d -p 8501:8501 --name my-streamlit-app ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/my-streamlit-app:latest 
