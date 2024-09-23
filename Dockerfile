@@ -7,7 +7,8 @@ WORKDIR /app
 # Copy the current directory contents into the container
 COPY . /app
 
-
+# Copy the .env file to the working directory
+COPY .env /app/.env
 
 # Install dependencies
 RUN pip install --upgrade pip \
